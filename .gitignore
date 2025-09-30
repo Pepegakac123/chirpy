@@ -1,5 +1,6 @@
 # Binaries
 out
+chirpy
 *.exe
 
 # Zone Identifier (Windows)
@@ -7,3 +8,5 @@ out
 
 # Go
 go.sum
+
+.env
