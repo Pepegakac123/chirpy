@@ -15,6 +15,7 @@ import (
 type apiConfig struct {
 	fileServerHits atomic.Int32
 	db             *database.Queries
+	platform       string
 }
 
 func main() {
@@ -26,16 +27,10 @@ func main() {
 		return
 	}
 	dbQueries := database.New(db)
-	apiCfg := apiConfig{}
-	apiCfg.db = dbQueries
+	apiCfg := apiConfig{fileServerHits: atomic.Int32{}, db: dbQueries, platform: os.Getenv("PLATFORM")}
 	const port string = "8080"
 	mux := http.NewServeMux()
-	mux.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
-	mux.HandleFunc("GET /api/healthz", checkHealth)
-	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
-	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
-	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
-
+	handleRouting(mux, &apiCfg)
 	srv := &http.Server{
 		Addr:    ":" + port,
 		Handler: mux,
@@ -46,6 +41,15 @@ func main() {
 		fmt.Printf("An error ocured %v", err)
 	}
 
+}
+
+func handleRouting(mux *http.ServeMux, apiCfg *apiConfig) {
+	mux.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
+	mux.HandleFunc("GET /api/healthz", checkHealth)
+	mux.HandleFunc("POST /api/users", apiCfg.handlerUsers)
+	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
+	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
+	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
