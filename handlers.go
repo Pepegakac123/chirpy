@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Pepegakac123/chirpy/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -15,6 +16,14 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+}
+
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserId    uuid.UUID `json:"user_id"`
 }
 
 func checkHealth(w http.ResponseWriter, req *http.Request) {
@@ -47,36 +56,40 @@ func (c *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
 		respondWithError(w, 500, fmt.Sprintf("%v\n", err))
 		return
 	}
+	err = c.db.DeleteAllChirps(req.Context())
+	if err != nil {
+		respondWithError(w, 500, fmt.Sprintf("%v\n", err))
+		return
+	}
 	w.Write([]byte("OK"))
 }
-
-func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
-	replacement := "****"
-	badWords := map[string]string{
-		"kerfuffle": replacement,
-		"sharbert":  replacement,
-		"fornax":    replacement,
-	}
-
+func (c *apiConfig) handlerChirps(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
-		Body string `json:"body"`
+		Body   string    `json:"body"`
+		UserId uuid.UUID `json:"user_id"`
 	}
-
-	params := parameters{}
+	var params parameters
+	w.Header().Set("Content-Type", "application/json")
 	decoder := json.NewDecoder(req.Body)
 	err := decoder.Decode(&params)
 	if err != nil {
 		respondWithError(w, 500, "Something went wrong")
 		return
 	}
-
-	if len(params.Body) > 140 {
-		respondWithError(w, 400, "Chirp is too long")
+	cleanedBody, err := validateChirp(params.Body)
+	if err != nil {
+		respondWithError(w, 404, err.Error())
+	}
+	arg := database.CreateChirpParams{
+		Body:   cleanedBody,
+		UserID: params.UserId,
+	}
+	chirp, err := c.db.CreateChirp(req.Context(), arg)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong creating chirp")
 		return
 	}
-	cleanedBody := replaceBadWords(params.Body, badWords)
-
-	respondWithJSON(w, 200, map[string]string{"cleaned_body": cleanedBody})
+	respondWithJSON(w, 201, Chirp{ID: chirp.ID, CreatedAt: chirp.CreatedAt, UpdatedAt: chirp.UpdatedAt, Body: chirp.Body, UserId: chirp.UserID})
 }
 
 func (c *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
@@ -123,4 +136,20 @@ func replaceBadWords(msg string, badWords map[string]string) string {
 		}
 	}
 	return strings.Join(splitedString, " ")
+}
+
+func validateChirp(body string) (string, error) {
+	replacement := "****"
+	badWords := map[string]string{
+		"kerfuffle": replacement,
+		"sharbert":  replacement,
+		"fornax":    replacement,
+	}
+	if len(body) > 140 {
+		// respondWithError(w, 400, "Chirp is too long")
+		return "", fmt.Errorf("Chirp is too long")
+	}
+	cleanedBody := replaceBadWords(body, badWords)
+
+	return cleanedBody, nil
 }
