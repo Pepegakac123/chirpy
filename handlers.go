@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Pepegakac123/chirpy/internal/auth"
 	"github.com/Pepegakac123/chirpy/internal/database"
 	"github.com/google/uuid"
 )
@@ -43,6 +44,41 @@ func (c *apiConfig) handlerMetrics(w http.ResponseWriter, req *http.Request) {
     <p>Chirpy has been visited %d times!</p>
   </body>
 </html>`, c.fileServerHits.Load())
+}
+
+func (c *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
+	type parameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+	var params parameters
+	w.Header().Set("Content-Type", "application/json")
+	decoder := json.NewDecoder(req.Body)
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong")
+		return
+	}
+	user, err := c.db.GetUserByEmail(req.Context(), params.Email)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, 401, "Incorrect email or password")
+			return
+		}
+		respondWithError(w, 500, "Database error")
+		return
+	}
+	IsPwdOk, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if err != nil {
+		respondWithError(w, 500, "Server Error")
+		return
+	}
+	if !IsPwdOk {
+		respondWithError(w, 401, "Incorrect email or password")
+		return
+	}
+	respondWithJSON(w, 200, User{ID: user.ID, CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt, Email: user.Email})
+
 }
 
 func (c *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
@@ -127,7 +163,8 @@ func (c *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, req *http.Reque
 
 func (c *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
-		Email string `json:"email"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 	var params parameters
 	w.Header().Set("Content-Type", "application/json")
@@ -137,8 +174,12 @@ func (c *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 		respondWithError(w, 500, "Something went wrong")
 		return
 	}
-
-	user, err := c.db.CreateUser(req.Context(), params.Email)
+	hashedPwd, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong")
+		return
+	}
+	user, err := c.db.CreateUser(req.Context(), database.CreateUserParams{Email: params.Email, HashedPassword: hashedPwd})
 	if err != nil {
 		fmt.Println(err)
 		respondWithError(w, 500, "Something went wrong whe connecting to the database")
