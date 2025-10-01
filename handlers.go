@@ -19,6 +19,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Token     string    `json:"token"`
 }
 
 type Chirp struct {
@@ -48,9 +49,13 @@ func (c *apiConfig) handlerMetrics(w http.ResponseWriter, req *http.Request) {
 
 func (c *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
-		Password string `json:"password"`
-		Email    string `json:"email"`
+		Password   string `json:"password"`
+		Email      string `json:"email"`
+		Expires_In int    `json:"expires_in_seconds"`
 	}
+	const maxExpirationTime = time.Hour
+	const defaultExpirationTime = time.Hour
+
 	var params parameters
 	w.Header().Set("Content-Type", "application/json")
 	decoder := json.NewDecoder(req.Body)
@@ -59,6 +64,7 @@ func (c *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 		respondWithError(w, 500, "Something went wrong")
 		return
 	}
+
 	user, err := c.db.GetUserByEmail(req.Context(), params.Email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -77,7 +83,24 @@ func (c *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 		respondWithError(w, 401, "Incorrect email or password")
 		return
 	}
-	respondWithJSON(w, 200, User{ID: user.ID, CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt, Email: user.Email})
+
+	expiresIn := defaultExpirationTime
+	if params.Expires_In != 0 {
+		requestedDuration := time.Duration(params.Expires_In) * time.Second
+		if requestedDuration > 0 && requestedDuration < maxExpirationTime {
+			expiresIn = requestedDuration
+		} else if requestedDuration > maxExpirationTime {
+			expiresIn = maxExpirationTime
+		}
+	}
+
+	token, err := auth.MakeJWT(user.ID, c.token, expiresIn)
+	if err != nil {
+		respondWithError(w, 500, "Failed to create token")
+		return
+	}
+
+	respondWithJSON(w, 200, User{ID: user.ID, CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt, Email: user.Email, Token: token})
 
 }
 
@@ -103,8 +126,7 @@ func (c *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
 }
 func (c *apiConfig) handlerCreateChirps(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
-		Body   string    `json:"body"`
-		UserId uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
 	}
 	var params parameters
 	w.Header().Set("Content-Type", "application/json")
@@ -114,13 +136,25 @@ func (c *apiConfig) handlerCreateChirps(w http.ResponseWriter, req *http.Request
 		respondWithError(w, 500, "Something went wrong")
 		return
 	}
+
+	bearerToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	userId, err := auth.ValidateJWT(bearerToken, c.token)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
 	cleanedBody, err := validateChirp(params.Body)
 	if err != nil {
-		respondWithError(w, 404, err.Error())
+		respondWithError(w, 400, err.Error())
+		return
 	}
 	arg := database.CreateChirpParams{
 		Body:   cleanedBody,
-		UserID: params.UserId,
+		UserID: userId,
 	}
 	chirp, err := c.db.CreateChirp(req.Context(), arg)
 	if err != nil {

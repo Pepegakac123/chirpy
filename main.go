@@ -16,6 +16,7 @@ type apiConfig struct {
 	fileServerHits atomic.Int32
 	db             *database.Queries
 	platform       string
+	token          string
 }
 
 func main() {
@@ -27,7 +28,7 @@ func main() {
 		return
 	}
 	dbQueries := database.New(db)
-	apiCfg := apiConfig{fileServerHits: atomic.Int32{}, db: dbQueries, platform: os.Getenv("PLATFORM")}
+	apiCfg := apiConfig{fileServerHits: atomic.Int32{}, db: dbQueries, platform: os.Getenv("PLATFORM"), token: os.Getenv("TOKEN")}
 	const port string = "8080"
 	mux := http.NewServeMux()
 	handleRouting(mux, &apiCfg)
