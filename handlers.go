@@ -1,7 +1,9 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -63,7 +65,7 @@ func (c *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
 	}
 	w.Write([]byte("OK"))
 }
-func (c *apiConfig) handlerChirps(w http.ResponseWriter, req *http.Request) {
+func (c *apiConfig) handlerCreateChirps(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
 		Body   string    `json:"body"`
 		UserId uuid.UUID `json:"user_id"`
@@ -90,6 +92,37 @@ func (c *apiConfig) handlerChirps(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	respondWithJSON(w, 201, Chirp{ID: chirp.ID, CreatedAt: chirp.CreatedAt, UpdatedAt: chirp.UpdatedAt, Body: chirp.Body, UserId: chirp.UserID})
+}
+
+func (c *apiConfig) handlerGetChirps(w http.ResponseWriter, req *http.Request) {
+
+	w.Header().Set("Content-Type", "application/json")
+	chirp, err := c.db.GetAllChirps(req.Context())
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong creating chirp")
+		return
+	}
+	respondWithJSON(w, 200, chirp)
+}
+func (c *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, req *http.Request) {
+
+	w.Header().Set("Content-Type", "application/json")
+	chirpIDString := req.PathValue("chirpID")
+	chirpID, err := uuid.Parse(chirpIDString)
+	if err != nil {
+		respondWithError(w, 400, "Invalid chirp ID")
+		return
+	}
+	chirp, err := c.db.GetSingleChirp(req.Context(), chirpID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, 404, "Chirp not found")
+			return
+		}
+		respondWithError(w, 500, "Database error")
+		return
+	}
+	respondWithJSON(w, 200, chirp)
 }
 
 func (c *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
