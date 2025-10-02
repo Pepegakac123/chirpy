@@ -15,11 +15,12 @@ import (
 )
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token     string    `json:"token"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
 type Chirp struct {
@@ -49,11 +50,9 @@ func (c *apiConfig) handlerMetrics(w http.ResponseWriter, req *http.Request) {
 
 func (c *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
-		Password   string `json:"password"`
-		Email      string `json:"email"`
-		Expires_In int    `json:"expires_in_seconds"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
-	const maxExpirationTime = time.Hour
 	const defaultExpirationTime = time.Hour
 
 	var params parameters
@@ -84,26 +83,72 @@ func (c *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	expiresIn := defaultExpirationTime
-	if params.Expires_In != 0 {
-		requestedDuration := time.Duration(params.Expires_In) * time.Second
-		if requestedDuration > 0 && requestedDuration < maxExpirationTime {
-			expiresIn = requestedDuration
-		} else if requestedDuration > maxExpirationTime {
-			expiresIn = maxExpirationTime
-		}
-	}
-
-	token, err := auth.MakeJWT(user.ID, c.token, expiresIn)
+	token, err := auth.MakeJWT(user.ID, c.token, defaultExpirationTime)
 	if err != nil {
 		respondWithError(w, 500, "Failed to create token")
 		return
 	}
 
-	respondWithJSON(w, 200, User{ID: user.ID, CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt, Email: user.Email, Token: token})
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		respondWithError(w, 500, "Failed to create refresh token")
+		return
+	}
+
+	_, err = c.db.CreateRefreshToken(req.Context(), database.CreateRefreshTokenParams{Token: refreshToken, UserID: user.ID, ExpiresAt: time.Now().UTC().AddDate(0, 0, 60)})
+	if err != nil {
+		respondWithError(w, 500, "Failed to create refresh token")
+		return
+	}
+	respondWithJSON(w, 200, User{
+		ID:           user.ID,
+		CreatedAt:    user.CreatedAt,
+		UpdatedAt:    user.UpdatedAt,
+		Email:        user.Email,
+		Token:        token,
+		RefreshToken: refreshToken,
+	})
 
 }
+func (c *apiConfig) handlerRefresh(w http.ResponseWriter, req *http.Request) {
+	refreshToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	user, err := c.db.GetUserFromRefreshToken(req.Context(), refreshToken)
+	if err != nil {
+		respondWithError(w, 401, "Invalid refresh token")
+		return
+	}
 
+	accessToken, err := auth.MakeJWT(user.ID, c.token, time.Hour)
+	if err != nil {
+		respondWithError(w, 500, "Failed to create token")
+		return
+	}
+	respondWithJSON(w, 200, map[string]string{
+		"token": accessToken,
+	})
+
+}
+func (c *apiConfig) handlerRevoke(w http.ResponseWriter, req *http.Request) {
+	refreshToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	err = c.db.RevokeToken(req.Context(), refreshToken)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, 401, "Invalid refresh token")
+			return
+		}
+		respondWithError(w, 500, "Failed to revoke token")
+		return
+	}
+	w.WriteHeader(204)
+}
 func (c *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
 	if c.platform != "dev" {
 		respondWithError(w, 403, "You can not reset user anywhere else than in dev PLATFORM")
