@@ -240,6 +240,49 @@ func (c *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, req *http.Reque
 	respondWithJSON(w, 200, chirp)
 }
 
+func (c *apiConfig) handlerDeleteSingleChirp(w http.ResponseWriter, req *http.Request) {
+	bearerToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthenticated")
+		return
+	}
+	userID, err := auth.ValidateJWT(bearerToken, c.token)
+	if err != nil {
+		respondWithError(w, 401, "Unauthenticated")
+		return
+	}
+	chirpIDString := req.PathValue("chirpID")
+	chirpID, err := uuid.Parse(chirpIDString)
+	if err != nil {
+		respondWithError(w, 400, "Invalid chirp ID")
+		return
+	}
+	chirp, err := c.db.GetSingleChirp(req.Context(), chirpID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, 404, "Chirp not found")
+			return
+		}
+		respondWithError(w, 500, "Database error")
+		return
+	}
+	if chirp.UserID != userID {
+		respondWithError(w, 403, "Forbidden")
+		return
+	}
+	err = c.db.DeleteChirpByID(req.Context(), chirpID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, 404, "Not Found")
+			return
+		}
+
+		respondWithError(w, 500, "Database error")
+		return
+	}
+	w.WriteHeader(204)
+}
+
 func (c *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
 		Password string `json:"password"`
@@ -265,6 +308,43 @@ func (c *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	respondWithJSON(w, 201, User{ID: user.ID, CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt, Email: user.Email})
+
+}
+
+func (c *apiConfig) handlerUpdateUsers(w http.ResponseWriter, req *http.Request) {
+	bearerToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	userId, err := auth.ValidateJWT(bearerToken, c.token)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	type parameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+	var params parameters
+
+	decoder := json.NewDecoder(req.Body)
+	err = decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong")
+		return
+	}
+	hashedPwd, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong")
+		return
+	}
+	updatedUser, err := c.db.UpdateUserData(req.Context(), database.UpdateUserDataParams{Email: params.Email, HashedPassword: hashedPwd, ID: userId})
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong")
+		return
+	}
+	respondWithJSON(w, 200, User{ID: updatedUser.ID, CreatedAt: updatedUser.CreatedAt, UpdatedAt: updatedUser.UpdatedAt, Email: updatedUser.Email})
 
 }
 func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
