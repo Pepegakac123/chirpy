@@ -17,6 +17,7 @@ type apiConfig struct {
 	db             *database.Queries
 	platform       string
 	token          string
+	polkaApiKey    string
 }
 
 func main() {
@@ -28,7 +29,7 @@ func main() {
 		return
 	}
 	dbQueries := database.New(db)
-	apiCfg := apiConfig{fileServerHits: atomic.Int32{}, db: dbQueries, platform: os.Getenv("PLATFORM"), token: os.Getenv("TOKEN")}
+	apiCfg := apiConfig{fileServerHits: atomic.Int32{}, db: dbQueries, platform: os.Getenv("PLATFORM"), token: os.Getenv("TOKEN"), polkaApiKey: os.Getenv("POLKA_KEY")}
 	const port string = "8080"
 	mux := http.NewServeMux()
 	handleRouting(mux, &apiCfg)
@@ -53,6 +54,7 @@ func handleRouting(mux *http.ServeMux, apiCfg *apiConfig) {
 	mux.HandleFunc("POST /api/users", apiCfg.handlerUsers)
 	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUsers)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirps)
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.handlerPolkaWebhook)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetSingleChirp)
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteSingleChirp)

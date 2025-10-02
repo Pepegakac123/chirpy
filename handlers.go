@@ -19,6 +19,7 @@ type User struct {
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	Email        string    `json:"email"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
 }
@@ -105,6 +106,7 @@ func (c *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 		CreatedAt:    user.CreatedAt,
 		UpdatedAt:    user.UpdatedAt,
 		Email:        user.Email,
+		IsChirpyRed:  user.IsChirpyRed,
 		Token:        token,
 		RefreshToken: refreshToken,
 	})
@@ -307,7 +309,7 @@ func (c *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 		respondWithError(w, 500, "Something went wrong whe connecting to the database")
 		return
 	}
-	respondWithJSON(w, 201, User{ID: user.ID, CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt, Email: user.Email})
+	respondWithJSON(w, 201, User{ID: user.ID, CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt, Email: user.Email, IsChirpyRed: user.IsChirpyRed})
 
 }
 
@@ -344,8 +346,48 @@ func (c *apiConfig) handlerUpdateUsers(w http.ResponseWriter, req *http.Request)
 		respondWithError(w, 500, "Something went wrong")
 		return
 	}
-	respondWithJSON(w, 200, User{ID: updatedUser.ID, CreatedAt: updatedUser.CreatedAt, UpdatedAt: updatedUser.UpdatedAt, Email: updatedUser.Email})
+	respondWithJSON(w, 200, User{ID: updatedUser.ID, CreatedAt: updatedUser.CreatedAt, UpdatedAt: updatedUser.UpdatedAt, Email: updatedUser.Email, IsChirpyRed: updatedUser.IsChirpyRed})
 
+}
+
+func (c *apiConfig) handlerPolkaWebhook(w http.ResponseWriter, req *http.Request) {
+	type parameters struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserID uuid.UUID `json:"user_id"`
+		} `json:"data"`
+	}
+
+	reqApiKey, err := auth.GetApiKey(req.Header)
+	if err != nil || reqApiKey != c.polkaApiKey {
+		respondWithError(w, 401, "The api key does not match")
+		return
+	}
+
+	var params parameters
+	w.Header().Set("Content-Type", "application/json")
+	decoder := json.NewDecoder(req.Body)
+	err = decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 400, "Invalid request body")
+		return
+	}
+	switch params.Event {
+	case "user.upgraded":
+		err = c.db.UpgradeUserToChirpyRed(req.Context(), params.Data.UserID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				respondWithError(w, 404, "User not found")
+			} else {
+				respondWithError(w, 500, "Database error")
+			}
+			return
+		}
+		w.WriteHeader(204)
+		return
+	default:
+		w.WriteHeader(204)
+	}
 }
 func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
