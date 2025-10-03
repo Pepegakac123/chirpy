@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -214,11 +215,43 @@ func (c *apiConfig) handlerCreateChirps(w http.ResponseWriter, req *http.Request
 func (c *apiConfig) handlerGetChirps(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
-	chirp, err := c.db.GetAllChirps(req.Context())
-	if err != nil {
-		respondWithError(w, 500, "Something went wrong creating chirp")
-		return
+	queryAuthorId := req.URL.Query().Get("author_id")
+	querySort := req.URL.Query().Get("sort")
+	var chirp []database.Chirp
+	if queryAuthorId == "" {
+		dbChirp, err := c.db.GetAllChirps(req.Context())
+		if err != nil {
+			respondWithError(w, 500, "Something went wrong creating chirp")
+			return
+		}
+		chirp = append(chirp, dbChirp...)
+	} else {
+		authorID, err := uuid.Parse(queryAuthorId)
+		if err != nil {
+			respondWithError(w, 400, "Invalid author ID")
+			return
+		}
+		dbChirp, err := c.db.GetAllChirpsByAuthor(req.Context(), authorID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				respondWithError(w, 404, "Chirp not found")
+				return
+			}
+			respondWithError(w, 500, "Something went wrong creating chirp")
+			return
+		}
+		chirp = append(chirp, dbChirp...)
 	}
+	if querySort != "desc" {
+		sort.Slice(chirp, func(i, j int) bool {
+			return chirp[i].CreatedAt.Before(chirp[j].CreatedAt)
+		})
+	} else {
+		sort.Slice(chirp, func(i, j int) bool {
+			return chirp[i].CreatedAt.After(chirp[j].CreatedAt)
+		})
+	}
+
 	respondWithJSON(w, 200, chirp)
 }
 func (c *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, req *http.Request) {
